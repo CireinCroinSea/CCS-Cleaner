@@ -1,47 +1,42 @@
-# 🖤 Cire Cleaner — продвинутая очистка диска
+# CCS Cleaner v2.0.0
 
-**Cire Cleaner** — программа для Windows, предназначенная для поиска больших файлов, обнаружения ненужных данных и освобождения места на диске с ручным контролем удаления.
+CCS Cleaner is a Windows utility for locating large files and carefully reviewing removable temporary data.
 
-## ✨ Возможности
+## Features
 
-- 🔍 **Поиск больших файлов** — поиск файлов, которые занимают много места на диске.
-- 🧹 **Очистка мусора** — поиск временных файлов, отчётов об ошибках и поддерживаемых видов кэша.
-- 📁 **Поиск пустых папок** — обнаружение пустых каталогов для последующей проверки и удаления.
-- 🎮 **Менеджер программ и игр** — просмотр установленных приложений и игр.
-- ☑️ **Ручной выбор файлов** — ты сам решаешь, какие найденные объекты удалить.
-- 🎨 **Настройка интерфейса** — тёмные темы, изменение размера текста и цветов категорий.
-- 🛡️ **Защита системных каталогов** — важные системные расположения исключаются из обычного сканирования, чтобы снизить риск случайного удаления.
+- Scan a selected fixed or removable drive for large files, with a size threshold and name filter.
+- Find supported temporary files, crash reports, known shader and Explorer caches, and empty folders in common user folders.
+- Browse installed programs and games and launch their registered uninstallers.
+- Review and manually select every result before deletion. Deletion asks for confirmation and rechecks each item's path and category.
+- Skip protected Windows and application locations, critical system files, and directory reparse points such as symbolic links and junctions.
+- Continue scanning when folders are inaccessible; skip locked, inaccessible, or changed items during deletion.
+- Use the dark interface, themes, text-size setting, and configurable category colors.
 
-## 🖥️ Системные требования
+## Download and runtime
 
-- Windows 10 или Windows 11.
-- .NET 8 SDK для сборки программы из исходного кода.
+The Windows x64 single-file build is self-contained and includes .NET 8. The target PC does not need the .NET 8 Desktop Runtime installed. The compressed executable is about 71.6 MB; bundled native runtime components may be extracted at first launch.
 
-## 🚀 Как собрать программу
+## Build from source
 
-1. Скачай репозиторий или клонируй его на компьютер.
-2. Открой папку проекта.
-3. Запусти файл `Build-EXE.bat`.
-4. Если сборка завершится успешно, найди готовую программу в папке `Publish`.
+1. Install the .NET 8 SDK on Windows x64.
+2. Run `Build-EXE.bat`.
+3. Find `CCS-Cleaner.exe` in `Publish`.
 
-Также можно открыть файл `CireCleaner.csproj` в совместимой среде разработки для .NET и собрать проект оттуда.
+The build script restores, builds, and publishes a compressed self-contained single-file executable. It clears the previous contents of `Publish` before publishing.
 
-## ⚠️ Важная информация
+## Changes in v2.0.0
 
-Программа предоставляется «как есть». Ни один очиститель не может гарантировать, что каждый найденный файл безопасно удалять.
+- Renamed the application from Cire Cleaner to CCS Cleaner and updated the executable name.
+- Improved scan safety and handling of inaccessible paths and reparse points.
+- Expanded cleanup discovery for user temporary files, crash reports, supported caches, and empty folders.
+- Revalidated paths, categories, and empty-folder state immediately before deletion; locked or changed objects are skipped.
+- Fixed dark table scrolling, hover text contrast, theme-aware program rows, and visibility of the Settings button.
+- Added a compressed standalone Windows x64 build that runs without a separately installed .NET Desktop Runtime.
 
-- Всегда проверяй полный путь и содержимое файла перед удалением.
-- Не удаляй незнакомые файлы только потому, что они занимают много места.
-- После удаления кэша некоторые программы могут создать его заново.
-- Защита системных каталогов снижает риск, но не гарантирует абсолютную безопасность.
-- Перед очисткой важных данных рекомендуется сделать резервную копию.
+## Safety
 
-👨‍💻 Авторы
+Nothing is deleted automatically. Review each selected path and the confirmation summary. The program does not delete program directories as a substitute for uninstalling; use the registered uninstaller shown in the Programs view. If the safety category cannot be confirmed, the object is skipped.
 
-cireincroinsea — идея проекта, требования, интерфейс и тестирование.
+## Author
 
-ChatGPT (OpenAI) — помощь с разработкой, реализацией функций и исправлением ошибок.
-
-## 📄 Лицензия
-
-На данный момент лицензия проекта не указана. До добавления лицензии все права на исходный код сохраняются за автором.
+[cireincroinsea](https://t.me/cireincroinsea)

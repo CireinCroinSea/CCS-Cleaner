@@ -6,8 +6,9 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>Cire-Cleaner</AssemblyName>
+    <AssemblyName>CCS-Cleaner</AssemblyName>
     <RootNamespace>CireCleaner</RootNamespace>
     <Version>2.0.0</Version>
   </PropertyGroup>
 </Project>
+

@@ -19,7 +19,7 @@ internal static class Program
     }
 }
 
-internal sealed record ScanEntry(string Category, string Name, string Path, long Size, bool IsDirectory, string Kind = "file");
+internal sealed record ScanEntry(string Category, string Name, string Path, long Size, bool IsDirectory, long LastWriteUtcTicks = 0, string Kind = "file");
 internal sealed record InstalledApp(string Name, string Publisher, string Version, string InstallLocation, string UninstallString, string QuietUninstallString, bool IsSystem, bool IsGame, string RegistryKey);
 
 internal sealed class CleanerForm : Form
@@ -70,7 +70,7 @@ internal sealed class CleanerForm : Form
 
     public CleanerForm()
     {
-        Text = "Cire Cleaner";
+        Text = "CCS Cleaner";
         Size = new Size(1200, 760);
         MinimumSize = new Size(980, 600);
         StartPosition = FormStartPosition.CenterScreen;
@@ -88,7 +88,7 @@ internal sealed class CleanerForm : Form
         layout.Controls.Add(top, 0, 0);
 
         var headingRow = new FlowLayoutPanel { Location = new Point(12, 7), Size = new Size(900, 34), AutoSize = false, WrapContents = false, Margin = new Padding(0), Padding = new Padding(0) };
-        var appTitle = new Label { Text = "CIRE CLEANER", AutoSize = true, Font = new Font("Segoe UI Semibold", 16, FontStyle.Bold), ForeColor = accent, Margin = new Padding(0, 0, 16, 0) };
+        var appTitle = new Label { Text = "CCS CLEANER", AutoSize = true, Font = new Font("Segoe UI Semibold", 16, FontStyle.Bold), ForeColor = accent, Margin = new Padding(0, 0, 16, 0) };
         headingRow.Controls.Add(appTitle);
         var authorPrefix = new Label { Text = "Автор:", AutoSize = true, ForeColor = Color.Gainsboro, Margin = new Padding(0, 9, 4, 0) };
         headingRow.Controls.Add(authorPrefix);
@@ -99,8 +99,12 @@ internal sealed class CleanerForm : Form
 
         var filtersRow = new FlowLayoutPanel { Location = new Point(12, 43), Size = new Size(1050, 34), AutoSize = false, WrapContents = false, Margin = new Padding(0), Padding = new Padding(0) };
         filtersRow.Controls.Add(new Label { Text = "Диск:", AutoSize = true, Margin = new Padding(4, 8, 2, 0) });
-        foreach (var d in DriveInfo.GetDrives().Where(d => d.IsReady && d.DriveType is DriveType.Fixed or DriveType.Removable))
-            drive.Items.Add(d.Name);
+        foreach (var d in DriveInfo.GetDrives())
+        {
+            try { if (d.IsReady && d.DriveType is DriveType.Fixed or DriveType.Removable) drive.Items.Add(d.Name); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
         if (drive.Items.Count == 0) drive.Items.Add(@"C:\");
         drive.SelectedIndex = 0;
         StyleCombo(drive);
@@ -121,37 +125,73 @@ internal sealed class CleanerForm : Form
         top.Controls.Add(filtersRow);
 
         var buttonsRow = new FlowLayoutPanel { Location = new Point(12, 81), Size = new Size(1140, 40), AutoSize = false, WrapContents = false, Margin = new Padding(0), Padding = new Padding(0), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        buttonsRow.Controls.Add(MakeButton("Поиск на диске", 135, (_, _) => ScanLargeFiles()));
-        buttonsRow.Controls.Add(MakeButton("Выбрать", 100, (_, _) => { foreach (ListViewItem i in results.Items) i.Checked = true; }));
-        buttonsRow.Controls.Add(MakeButton("Снять", 105, (_, _) => { foreach (ListViewItem i in results.Items) i.Checked = false; }));
-        buttonsRow.Controls.Add(MakeButton("Удалить", 155, (_, _) => DeleteSelected()));
-        buttonsRow.Controls.Add(MakeButton("Очистка мусора", 145, (_, _) => ScanJunk()));
-        buttonsRow.Controls.Add(MakeButton("Программы", 120, (_, _) => ShowApps()));
-        buttonsRow.Controls.Add(MakeButton("Настройки", 120, (_, _) => ShowSettings()));
+        buttonsRow.Controls.Add(MakeButton("Поиск на диске", 120, (_, _) => ScanLargeFiles()));
+        buttonsRow.Controls.Add(MakeButton("Выбрать", 82, (_, _) => { foreach (ListViewItem i in results.Items) i.Checked = true; }));
+        buttonsRow.Controls.Add(MakeButton("Снять", 82, (_, _) => { foreach (ListViewItem i in results.Items) i.Checked = false; }));
+        buttonsRow.Controls.Add(MakeButton("Удалить", 120, (_, _) => DeleteSelected()));
+        buttonsRow.Controls.Add(MakeButton("Очистка мусора", 130, (_, _) => ScanJunk()));
+        buttonsRow.Controls.Add(MakeButton("Программы", 105, (_, _) => ShowApps()));
+        buttonsRow.Controls.Add(MakeButton("Настройки", 105, (_, _) => ShowSettings()));
         top.Controls.Add(buttonsRow);
 
-        results.BackColor = Color.FromArgb(12, 12, 15);
+        results.BackColor = controlColor;
         results.ForeColor = Color.White;
         results.OwnerDraw = true;
         results.DrawColumnHeader += (_, e) =>
         {
-            using var bg = new SolidBrush(Color.FromArgb(12, 12, 15));
-            using var fg = new SolidBrush(Color.White);
+            using var bg = new SolidBrush(results.BackColor);
             e.Graphics.FillRectangle(bg, e.Bounds);
-            TextRenderer.DrawText(e.Graphics, e.Header.Text, results.Font, e.Bounds, Color.White, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            using var pen = new Pen(Color.FromArgb(55, 55, 65));
+            TextRenderer.DrawText(e.Graphics, e.Header?.Text ?? "", results.Font, e.Bounds, results.ForeColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            using var pen = new Pen(ControlPaint.Dark(results.BackColor));
             e.Graphics.DrawRectangle(pen, e.Bounds);
         };
-        results.DrawItem += (_, e) => { if (e.Item != null) e.DrawDefault = true; };
-        results.DrawSubItem += (_, e) => { e.DrawDefault = true; };
+        results.DrawItem += (_, e) =>
+        {
+            if (e.Item == null) return;
+            using var brush = new SolidBrush(results.BackColor);
+            e.Graphics.FillRectangle(brush, e.Bounds);
+        };
+        results.DrawSubItem += (_, e) =>
+        {
+            if (e.Item == null || e.SubItem == null) return;
+            var background = results.BackColor;
+            if (appMode) background = BlendColors(background, e.Item.ForeColor, 0.10);
+            if (e.Item.Selected || (e.ItemState & ListViewItemStates.Hot) != 0)
+                background = background.GetBrightness() < 0.5f ? ControlPaint.Light(background, 0.15f) : ControlPaint.Dark(background, 0.08f);
+            var foreground = appMode ? e.Item.ForeColor : results.ForeColor;
+            using (var brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
+            var textBounds = e.Bounds;
+            if (e.ColumnIndex == 0 && results.CheckBoxes)
+            {
+                var checkState = e.Item.Checked ? System.Windows.Forms.VisualStyles.CheckBoxState.CheckedNormal : System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal;
+                var size = System.Windows.Forms.CheckBoxRenderer.GetGlyphSize(e.Graphics, checkState);
+                var location = new Point(e.Bounds.Left + 3, e.Bounds.Top + (e.Bounds.Height - size.Height) / 2);
+                System.Windows.Forms.CheckBoxRenderer.DrawCheckBox(e.Graphics, location, checkState);
+                int leftPadding = size.Width + 7;
+                textBounds.X += leftPadding;
+                textBounds.Width = Math.Max(0, textBounds.Width - leftPadding);
+            }
+            TextRenderer.DrawText(e.Graphics, e.SubItem.Text, results.Font, textBounds, foreground,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            using var gridPen = new Pen(ControlPaint.Dark(background));
+            e.Graphics.DrawLine(gridPen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+            e.Graphics.DrawLine(gridPen, e.Bounds.Right - 1, e.Bounds.Top, e.Bounds.Right - 1, e.Bounds.Bottom);
+        };
         results.Columns.Add("Категория / статус", 155);
         results.Columns.Add("Название", 230);
         results.Columns.Add("Размер / версия", 115);
         results.Columns.Add("Полный путь / издатель", 650);
         results.DoubleClick += (_, _) => OpenSelectedLocation();
         layout.Controls.Add(results, 0, 1);
-        results.HandleCreated += (_, _) => { try { SetWindowTheme(results.Handle, "DarkMode_Explorer", null); } catch { } };
-        results.HandleCreated += (_, _) => { try { SetWindowTheme(results.Handle, "DarkMode_ItemsView", null); } catch { } };
+        results.HandleCreated += (_, _) =>
+        {
+            try
+            {
+                // Apply one dark common-control theme so the native scrollbars match the black list background.
+                SetWindowTheme(results.Handle, "DarkMode_Explorer", null);
+            }
+            catch { }
+        };
 
         var strip = new StatusStrip { BackColor = panelColor, ForeColor = Color.White, SizingGrip = false };
         strip.Items.Add(status);
@@ -224,8 +264,8 @@ internal sealed class CleanerForm : Form
             else if (c is Label l) { l.ForeColor = t.Text; }
             else if (c is LinkLabel ll) { ll.LinkColor = t.Accent; ll.ActiveLinkColor = t.Text; }
         }
-        results.BackColor = Color.Black;
-        results.ForeColor = Color.White;
+        results.BackColor = t.Control;
+        results.ForeColor = t.Text;
         Font = new Font("Segoe UI", appFontSize);
         foreach (Control c in ControlsRecursive(this))
         {
@@ -245,7 +285,7 @@ internal sealed class CleanerForm : Form
 
     private void ShowSettings()
     {
-        using var dlg = new Form { Text = "Настройки Cire Cleaner", Size = new Size(440, 430), StartPosition = FormStartPosition.CenterParent, BackColor = panelColor, ForeColor = Color.White, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
+        using var dlg = new Form { Text = "Настройки CCS Cleaner", Size = new Size(440, 430), StartPosition = FormStartPosition.CenterParent, BackColor = panelColor, ForeColor = Color.White, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
         var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
         dlg.Controls.Add(flow);
         flow.Controls.Add(new Label { Text = "Размер текста", AutoSize = true, ForeColor = Color.White });
@@ -288,8 +328,27 @@ internal sealed class CleanerForm : Form
         if (bytes >= 1024) return $"{bytes / 1024d:N0} КБ";
         return $"{bytes} Б";
     }
-    private void SetStatus(string text) { status.Text = text; Application.DoEvents(); }
-    private void ClearResults() { results.Items.Clear(); entries.Clear(); appMode = false; }
+    private static Color BlendColors(Color background, Color foreground, double amount)
+    {
+        amount = Math.Clamp(amount, 0, 1);
+        return Color.FromArgb(
+            (int)Math.Round(background.R + (foreground.R - background.R) * amount),
+            (int)Math.Round(background.G + (foreground.G - background.G) * amount),
+            (int)Math.Round(background.B + (foreground.B - background.B) * amount));
+    }
+    private static long SaturatingAdd(long total, long value) => value > long.MaxValue - total ? long.MaxValue : total + value;
+    private void SetStatus(string text) { status.Text = text; status.Owner?.Update(); }
+    private void ClearResults()
+    {
+        results.Items.Clear(); entries.Clear(); appMode = false;
+        if (results.Columns.Count >= 4)
+        {
+            results.Columns[0].Text = "Категория / статус";
+            results.Columns[1].Text = "Название";
+            results.Columns[2].Text = "Размер / версия";
+            results.Columns[3].Text = "Полный путь / издатель";
+        }
+    }
     private void AddEntry(ScanEntry e)
     {
         entries.Add(e);
@@ -303,16 +362,20 @@ internal sealed class CleanerForm : Form
     {
         string full;
         try { full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar); } catch { return true; }
-        string[] blockedNames = ["Windows", "Program Files", "Program Files (x86)", "ProgramData", "System Volume Information", "$Recycle.Bin", "Recovery", "PerfLogs", "Windows.old", "Documents and Settings", "Boot", "EFI"];
-        foreach (string name in blockedNames)
+        var blocked = new List<string>();
+        string[] blockedNames = ["Windows", "Program Files", "Program Files (x86)", "ProgramData", "System Volume Information", "$Recycle.Bin", "Recovery", "PerfLogs", "Windows.old", "Documents and Settings", "Boot", "EFI", "Config.Msi"];
+        try { blocked.AddRange(blockedNames.Select(name => Path.Combine(root, name))); } catch { return true; }
+        blocked.AddRange(new[] { Environment.GetFolderPath(Environment.SpecialFolder.Windows), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData) }.Where(p => !string.IsNullOrWhiteSpace(p)));
+        foreach (string candidate in blocked)
         {
-            string blocked = Path.GetFullPath(Path.Combine(root, name)).TrimEnd(Path.DirectorySeparatorChar);
-            if (full.Equals(blocked, StringComparison.OrdinalIgnoreCase) || full.StartsWith(blocked + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return true;
+            string basePath;
+            try { basePath = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar); } catch { continue; }
+            if (full.Equals(basePath, StringComparison.OrdinalIgnoreCase) || full.StartsWith(basePath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return true;
         }
         string[] exactSystemFiles = ["hiberfil.sys", "pagefile.sys", "swapfile.sys", "memory.dmp", "bootmgr", "bootnxt"];
         if (exactSystemFiles.Contains(Path.GetFileName(full), StringComparer.OrdinalIgnoreCase)) return true;
-        if (full.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase) ||
-            full.Contains(@"\Windows\Installer\", StringComparison.OrdinalIgnoreCase)) return true;
+        if (full.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase) || full.Contains(@"\Windows\Installer\", StringComparison.OrdinalIgnoreCase) ||
+            full.Contains(@"\WinSxS\", StringComparison.OrdinalIgnoreCase) || full.Contains(@"\System32\", StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 
@@ -323,17 +386,8 @@ internal sealed class CleanerForm : Form
         try { full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar); }
         catch { return true; }
 
-        string[] excludedSegments =
-        [
-            @"\AppData",
-            @"\Program Files",
-            @"\Program Files (x86)",
-            @"\ProgramData",
-            @"\Windows"
-        ];
-        foreach (string segment in excludedSegments)
-            if (full.Contains(segment + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
-                full.EndsWith(segment, StringComparison.OrdinalIgnoreCase)) return true;
+        string[] excludedRoots = [Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) is string profile && !string.IsNullOrWhiteSpace(profile) ? Path.Combine(profile, "AppData") : "", Path.Combine(root, "AppData")];
+        if (excludedRoots.Any(p => !string.IsNullOrWhiteSpace(p) && IsInsideDirectory(full, p))) return true;
 
         // Do not follow reparse points/junctions; they can redirect scans into protected or repeated trees.
         try
@@ -341,7 +395,9 @@ internal sealed class CleanerForm : Form
             var attributes = File.GetAttributes(path);
             if ((attributes & FileAttributes.ReparsePoint) != 0) return true;
         }
-        catch { }
+        catch (IOException) { return true; }
+        catch (UnauthorizedAccessException) { return true; }
+        catch (ArgumentException) { return true; }
         return false;
     }
 
@@ -351,20 +407,21 @@ internal sealed class CleanerForm : Form
         if (!Directory.Exists(root)) { SetStatus("Диск недоступен."); return; }
         if (MessageBox.Show($"Искать файлы от {FormatSize(MinimumBytes)} на {root}?\nКритические системные файлы (включая hiberfil.sys/pagefile.sys/swapfile.sys), системные папки, Program Files и AppData исключаются. Личные файлы могут попасть в список.", "Поиск на диске", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         ClearResults(); SetStatus($"Сканирование {root}...");
-        string needle = nameFilter.Text.Trim(); int count = 0;
+        string needle = nameFilter.Text.Trim(); int count = 0; long totalBytes = 0; int examined = 0;
         foreach (string file in EnumerateFilesSafely(root))
         {
+            examined++;
             try
             {
                 var info = new FileInfo(file);
                 if (info.Length < MinimumBytes || IsExcludedFromLargeFileScan(file, root)) continue;
                 if (needle.Length > 0 && !info.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)) continue;
-                AddEntry(new ScanEntry("Большой файл", info.Name, file, info.Length, false)); count++;
-                if (count % 100 == 0) SetStatus($"Найдено файлов: {count}");
+                AddEntry(new ScanEntry("Большой файл", info.Name, file, info.Length, false, info.LastWriteTimeUtc.Ticks)); count++; totalBytes = SaturatingAdd(totalBytes, info.Length);
             }
             catch { }
+            if (examined % 250 == 0) SetStatus($"Проверено файлов: {examined:N0} • найдено: {count:N0} • размер: {FormatSize(totalBytes)}");
         }
-        SetStatus($"Поиск завершён. Найдено файлов: {results.Items.Count}. Двойной щелчок по строке открывает расположение.");
+        SetStatus($"Поиск завершён. Проверено файлов: {examined:N0} • найдено: {count:N0} • размер: {FormatSize(totalBytes)}.");
     }
 
     private IEnumerable<string> EnumerateFilesSafely(string root)
@@ -377,7 +434,7 @@ internal sealed class CleanerForm : Form
             string[] files = Array.Empty<string>(), dirs = Array.Empty<string>();
             try { files = Directory.GetFiles(dir); } catch { }
             try { dirs = Directory.GetDirectories(dir); } catch { }
-            foreach (string f in files) yield return f;
+            foreach (string f in files) if (!IsExcludedFromLargeFileScan(f, root)) yield return f;
             foreach (string d in dirs) if (!IsExcludedFromLargeFileScan(d, root)) pending.Push(d);
         }
     }
@@ -399,12 +456,15 @@ internal sealed class CleanerForm : Form
             (Path.Combine(local, @"AMD\DxCache"), "Кэш шейдеров AMD"),
             (Path.Combine(local, @"AMD\GLCache"), "Кэш OpenGL AMD")
         }.DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+        int scanned = 0; long approximateBytes = 0;
         foreach (var root in tempRoots)
         {
             if (!Directory.Exists(root.Path)) continue;
             foreach (string file in EnumerateFilesUnderKnownTemp(root.Path))
             {
-                try { var info = new FileInfo(file); AddEntry(new ScanEntry(root.Name, info.Name, file, info.Length, false)); } catch { }
+                try { var info = new FileInfo(file); AddEntry(new ScanEntry(root.Name, info.Name, file, info.Length, false, info.LastWriteTimeUtc.Ticks)); approximateBytes = SaturatingAdd(approximateBytes, info.Length); }
+                catch { }
+                if (++scanned % 250 == 0) SetStatus($"Проверено файлов: {scanned:N0} • найдено: {results.Items.Count:N0} • размер: {FormatSize(approximateBytes)}");
             }
         }
         string explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Microsoft\Windows\Explorer");
@@ -412,7 +472,7 @@ internal sealed class CleanerForm : Form
         {
             if (Directory.Exists(explorer))
                 foreach (string f in Directory.GetFiles(explorer).Where(f => Path.GetFileName(f).StartsWith("thumbcache_", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(f).StartsWith("iconcache_", StringComparison.OrdinalIgnoreCase)))
-                { try { var fi = new FileInfo(f); AddEntry(new ScanEntry("Кэш значков", fi.Name, f, fi.Length, false)); } catch { } }
+                { try { var fi = new FileInfo(f); AddEntry(new ScanEntry("Кэш значков", fi.Name, f, fi.Length, false, fi.LastWriteTimeUtc.Ticks)); approximateBytes = SaturatingAdd(approximateBytes, fi.Length); } catch { } }
         } catch { }
 
         string[] userRoots =
@@ -431,12 +491,13 @@ internal sealed class CleanerForm : Form
                 try
                 {
                     if (Directory.EnumerateFileSystemEntries(dir).Any()) continue;
-                    AddEntry(new ScanEntry("Пустая папка", Path.GetFileName(dir), dir, 0, true));
+                    string root = Path.GetPathRoot(dir) ?? "";
+                    if (!IsProtected(dir, root)) AddEntry(new ScanEntry("Пустая папка", Path.GetFileName(dir), dir, 0, true));
                 }
                 catch { }
             }
         }
-        SetStatus($"Найдено объектов: {results.Items.Count}. Найдены известные кэши/временные файлы и пустые папки; всё проверяется вручную.");
+        SetStatus($"Найдено объектов: {results.Items.Count:N0} • размер файлов: {FormatSize(approximateBytes)}. Кандидаты проверяются вручную.");
     }
 
     private IEnumerable<string> EnumerateFilesUnderKnownTemp(string root)
@@ -522,8 +583,67 @@ internal sealed class CleanerForm : Form
             Path.Combine(local, @"AMD\GLCache"),
             Path.Combine(local, @"Microsoft\Windows\Explorer")
         ];
-        bool categoryAllowed = entry.Category is "TEMP пользователя" or "Дампы сбоев" or "Отчёты ошибок" or "Архив отчётов" or "Кэш DirectX" or "Кэш шейдеров NVIDIA" or "Кэш шейдеров AMD" or "Кэш значков";
-        return categoryAllowed && roots.Any(r => !string.IsNullOrWhiteSpace(r) && IsInsideDirectory(entry.Path, r));
+        bool categoryAllowed = entry.Category is "TEMP пользователя" or "Дампы сбоев" or "Отчёты ошибок" or "Архив отчётов" or "Кэш DirectX" or "Кэш шейдеров NVIDIA" or "Кэш OpenGL NVIDIA" or "Кэш шейдеров AMD" or "Кэш OpenGL AMD" or "Кэш значков";
+        if (!categoryAllowed) return false;
+        foreach (string r in roots.Where(r => !string.IsNullOrWhiteSpace(r)))
+        {
+            if (!IsInsideDirectory(entry.Path, r)) continue;
+            if (entry.Category == "Кэш значков")
+                return Path.GetDirectoryName(Path.GetFullPath(entry.Path))?.Equals(Path.GetFullPath(r), StringComparison.OrdinalIgnoreCase) == true &&
+                    (entry.Name.StartsWith("thumbcache_", StringComparison.OrdinalIgnoreCase) || entry.Name.StartsWith("iconcache_", StringComparison.OrdinalIgnoreCase));
+            int index = Array.FindIndex(roots, candidate => candidate.Equals(r, StringComparison.OrdinalIgnoreCase));
+            string expectedCategory = index switch
+            {
+                0 or 1 => "TEMP пользователя", 2 => "Дампы сбоев", 3 => "Отчёты ошибок", 4 => "Архив отчётов",
+                5 => "Кэш DirectX", 6 => "Кэш шейдеров NVIDIA", 7 => "Кэш OpenGL NVIDIA", 8 => "Кэш шейдеров AMD", 9 => "Кэш OpenGL AMD", _ => ""
+            };
+            if (entry.Category == expectedCategory) return true;
+        }
+        return false;
+    }
+
+    private bool HasReparsePointInPath(string path)
+    {
+        try
+        {
+            string current = Path.GetFullPath(path);
+            while (!string.IsNullOrEmpty(current))
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+                string? parent = Path.GetDirectoryName(current.TrimEnd(Path.DirectorySeparatorChar));
+                if (string.IsNullOrEmpty(parent) || parent.Equals(current, StringComparison.OrdinalIgnoreCase)) break;
+                current = parent;
+            }
+            return false;
+        }
+        catch { return true; }
+    }
+
+    private string? ValidateFileBeforeDelete(ScanEntry entry, string selectedRoot)
+    {
+        try
+        {
+            string full = Path.GetFullPath(entry.Path);
+            string root = Path.GetPathRoot(full) ?? "";
+            if (entry.IsDirectory || string.IsNullOrEmpty(root) || IsProtected(full, root)) return "защищённый или неподдерживаемый путь";
+            bool knownCleanup = IsKnownSafeCleanupFile(entry);
+            if (!knownCleanup)
+            {
+                if (entry.Category != "Большой файл" || !IsInsideDirectory(full, selectedRoot) || IsExcludedFromLargeFileScan(full, selectedRoot))
+                    return "категория или расположение не подтверждены";
+            }
+            if (!File.Exists(full)) return "файл недоступен или уже отсутствует";
+            if (HasReparsePointInPath(full)) return "путь содержит ссылку или точку повторного анализа";
+            var info = new FileInfo(full); info.Refresh();
+            var attrs = info.Attributes;
+            if ((attrs & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.System | FileAttributes.ReadOnly)) != 0)
+                return "файл имеет системные атрибуты, защищён от записи или является ссылкой";
+            if (info.Length != entry.Size || info.LastWriteTimeUtc.Ticks != entry.LastWriteUtcTicks)
+                return "файл изменился после сканирования";
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        { return "файл недоступен для безопасной проверки"; }
     }
 
     private void DeleteSelected()
@@ -533,26 +653,41 @@ internal sealed class CleanerForm : Form
         if (selected.Count == 0) { MessageBox.Show("Сначала отметь объекты галочками."); return; }
         long total = selected.Where(i => i.Tag is ScanEntry e && !e.IsDirectory).Sum(i => ((ScanEntry)i.Tag!).Size);
         if (MessageBox.Show($"Выбрано объектов: {selected.Count}\nРазмер файлов: {FormatSize(total)}\n\nУдалить? Это необратимо. Папки удаляются только если всё ещё пусты.", "Подтверждение удаления", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        int deleted = 0;
+        int deleted = 0; int skipped = 0; var skipReasons = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (ListViewItem row in selected)
         {
             if (row.Tag is not ScanEntry e) continue;
             try
             {
                 string root = Path.GetPathRoot(e.Path) ?? SelectedRoot;
-                bool safeCleanupFile = IsKnownSafeCleanupFile(e);
-                if (!safeCleanupFile && IsProtected(e.Path, root)) continue;
-                if (!safeCleanupFile && e.Category != "Пустая папка" && e.Category != "Большой файл") continue;
-                if (!e.IsDirectory && File.Exists(e.Path)) File.Delete(e.Path);
-                else if (e.IsDirectory && e.Category == "Пустая папка" && Directory.Exists(e.Path) &&
-                         !IsProtected(e.Path, root) && !Directory.EnumerateFileSystemEntries(e.Path).Any()) Directory.Delete(e.Path);
-                else continue;
+                if (e.IsDirectory)
+                {
+                    string? reason = null;
+                    if (e.Category != "Пустая папка" || IsProtected(e.Path, root) || HasReparsePointInPath(e.Path) ||
+                        !new[] { Environment.GetFolderPath(Environment.SpecialFolder.Desktop), Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"), Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), Environment.GetFolderPath(Environment.SpecialFolder.MyMusic) }.Any(r => !string.IsNullOrWhiteSpace(r) && IsInsideDirectory(e.Path, r)))
+                        reason = "категория или расположение не подтверждены";
+                    else if (!Directory.Exists(e.Path)) reason = "папка недоступна или уже отсутствует";
+                    else if (Directory.EnumerateFileSystemEntries(e.Path).Any()) reason = "папка больше не пуста";
+                    if (reason != null) { skipped++; skipReasons[reason] = skipReasons.GetValueOrDefault(reason) + 1; row.SubItems[0].Text = "Пропущено: " + reason; row.Checked = false; continue; }
+                    Directory.Delete(e.Path);
+                }
+                else
+                {
+                    string? reason = ValidateFileBeforeDelete(e, SelectedRoot);
+                    if (reason != null) { skipped++; skipReasons[reason] = skipReasons.GetValueOrDefault(reason) + 1; row.SubItems[0].Text = "Пропущено: " + reason; row.Checked = false; continue; }
+                    File.Delete(e.Path);
+                }
                 results.Items.Remove(row); deleted++;
             }
-            catch { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                skipped++; string reason = ex is UnauthorizedAccessException ? "нет доступа или файл занят" : "объект недоступен или изменился";
+                skipReasons[reason] = skipReasons.GetValueOrDefault(reason) + 1; row.SubItems[0].Text = "Пропущено: " + reason; row.Checked = false;
+            }
         }
-        SetStatus($"Удалено объектов: {deleted}");
-        MessageBox.Show($"Удалено объектов: {deleted}", "Готово", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        string details = string.Join(Environment.NewLine, skipReasons.Select(x => $"• {x.Key}: {x.Value}"));
+        SetStatus($"Удалено: {deleted} • пропущено: {skipped}");
+        MessageBox.Show($"Удалено объектов: {deleted}\nПропущено объектов: {skipped}" + (details.Length > 0 ? "\n\n" + details : ""), "Результат удаления", MessageBoxButtons.OK, skipped == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
     private void OpenSelectedLocation()
@@ -666,11 +801,13 @@ internal sealed class CleanerForm : Form
             }
             try
             {
-                // Use the registered uninstaller, not recursive deletion of installation folders.
-                if (command.StartsWith("MsiExec.exe", StringComparison.OrdinalIgnoreCase) || command.StartsWith("msiexec", StringComparison.OrdinalIgnoreCase))
-                    Process.Start(new ProcessStartInfo("cmd.exe", "/c " + command) { UseShellExecute = false });
-                else
-                    Process.Start(new ProcessStartInfo("cmd.exe", "/c " + command) { UseShellExecute = false });
+                // Start the registered uninstaller directly; never pass registry data through cmd.exe.
+                if (!TrySplitCommandLine(command, out string executable, out string arguments))
+                {
+                    MessageBox.Show($"Не удалось безопасно разобрать команду деинсталлятора «{app.Name}». Удали её через Параметры Windows.");
+                    continue;
+                }
+                Process.Start(new ProcessStartInfo(executable) { Arguments = arguments, UseShellExecute = true });
             }
             catch (Exception ex) { MessageBox.Show($"Не удалось запустить деинсталлятор {app.Name}: {ex.Message}"); }
         }
@@ -678,8 +815,37 @@ internal sealed class CleanerForm : Form
         ShowApps();
     }
 
+    private static bool TrySplitCommandLine(string command, out string executable, out string arguments)
+    {
+        executable = ""; arguments = "";
+        string value = command.Trim();
+        if (value.Length == 0) return false;
+        if (value[0] == '"')
+        {
+            int endQuote = value.IndexOf('"', 1);
+            if (endQuote < 2) return false;
+            executable = value[1..endQuote]; arguments = value[(endQuote + 1)..].TrimStart();
+        }
+        else
+        {
+            int exeEnd = value.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+            if (exeEnd >= 0)
+            {
+                exeEnd += 4; executable = value[..exeEnd].Trim(); arguments = value[exeEnd..].TrimStart();
+            }
+            else
+            {
+                int split = value.IndexOfAny([' ', '\t']);
+                executable = split < 0 ? value : value[..split];
+                arguments = split < 0 ? "" : value[(split + 1)..].TrimStart();
+            }
+        }
+        return !string.IsNullOrWhiteSpace(executable) && !executable.Contains('"');
+    }
+
     private static void OpenUrl(string url)
     {
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
     }
 }
+
