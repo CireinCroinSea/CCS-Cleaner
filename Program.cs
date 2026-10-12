@@ -66,6 +66,14 @@ internal sealed class CleanerForm : Form
     private Color systemColor = Color.LightGreen;
     private Color gameColor = Color.Khaki;
     private Color unknownColor = Color.LightCoral;
+    private int sortColumn = -1;
+    private bool sortAscending = true;
+    private Point dragStartPoint;
+    private int dragAnchorIndex = -1;
+    private int dragRangeStart = -1;
+    private int dragRangeEnd = -1;
+    private bool dragTargetChecked;
+    private (bool Checked, bool Selected)[]? dragStartStates;
     private readonly string settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CireCleaner", "settings.txt");
 
     public CleanerForm()
@@ -144,6 +152,8 @@ internal sealed class CleanerForm : Form
             TextRenderer.DrawText(e.Graphics, e.Header?.Text ?? "", results.Font, e.Bounds, results.ForeColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             using var pen = new Pen(ControlPaint.Dark(results.BackColor));
             e.Graphics.DrawRectangle(pen, e.Bounds);
+            using var separator = new Pen(ControlPaint.Light(results.BackColor, 0.45f), 2);
+            e.Graphics.DrawLine(separator, e.Bounds.Left, e.Bounds.Bottom - 2, e.Bounds.Right, e.Bounds.Bottom - 2);
         };
         results.DrawItem += (_, e) =>
         {
@@ -181,6 +191,10 @@ internal sealed class CleanerForm : Form
         results.Columns.Add("Название", 230);
         results.Columns.Add("Размер / версия", 115);
         results.Columns.Add("Полный путь / издатель", 650);
+        results.ColumnClick += (_, e) => SortResults(e.Column);
+        results.MouseDown += ResultsMouseDown;
+        results.MouseMove += ResultsMouseMove;
+        results.MouseUp += ResultsMouseUp;
         results.DoubleClick += (_, _) => OpenSelectedLocation();
         layout.Controls.Add(results, 0, 1);
         results.HandleCreated += (_, _) =>
@@ -341,13 +355,136 @@ internal sealed class CleanerForm : Form
     private void ClearResults()
     {
         results.Items.Clear(); entries.Clear(); appMode = false;
-        if (results.Columns.Count >= 4)
+        sortColumn = -1;
+        sortAscending = true;
+        results.ListViewItemSorter = null;
+        UpdateColumnHeaders();
+    }
+
+    private void UpdateColumnHeaders()
+    {
+        if (results.Columns.Count < 4) return;
+        string[] captions = appMode
+            ? ["Категория", "Программа", "Версия", "Издатель / путь"]
+            : ["Категория / статус", "Название", "Размер / версия", "Полный путь / издатель"];
+        for (int i = 0; i < captions.Length; i++)
+            results.Columns[i].Text = captions[i] + (i == sortColumn ? (sortAscending ? " ▲" : " ▼") : "");
+    }
+
+    private void SortResults(int column)
+    {
+        if (column is not (1 or 2)) return;
+        if (sortColumn == column)
+            sortAscending = !sortAscending;
+        else
         {
-            results.Columns[0].Text = "Категория / статус";
-            results.Columns[1].Text = "Название";
-            results.Columns[2].Text = "Размер / версия";
-            results.Columns[3].Text = "Полный путь / издатель";
+            sortColumn = column;
+            // Names and program versions start alphabetically; file sizes start largest-first.
+            sortAscending = column == 1 || appMode;
         }
+
+        results.ListViewItemSorter = new ResultItemComparer(column, sortAscending, appMode);
+        results.Sort();
+        UpdateColumnHeaders();
+    }
+
+    private sealed class ResultItemComparer(int column, bool ascending, bool isAppMode) : System.Collections.IComparer
+    {
+        public int Compare(object? x, object? y)
+        {
+            if (ReferenceEquals(x, y)) return 0;
+            if (x is not ListViewItem left) return -1;
+            if (y is not ListViewItem right) return 1;
+
+            int comparison;
+            if (column == 1)
+                comparison = StringComparer.CurrentCultureIgnoreCase.Compare(GetName(left), GetName(right));
+            else if (isAppMode)
+                comparison = StringComparer.CurrentCultureIgnoreCase.Compare(GetText(left, column), GetText(right, column));
+            else
+                comparison = GetSize(left).CompareTo(GetSize(right));
+
+            if (comparison != 0) return ascending ? comparison : -comparison;
+            return StringComparer.CurrentCultureIgnoreCase.Compare(GetName(left), GetName(right));
+        }
+
+        private static string GetName(ListViewItem item) => item.Tag switch
+        {
+            ScanEntry entry => entry.Name,
+            InstalledApp app => app.Name,
+            _ => GetText(item, 1)
+        };
+
+        private static long GetSize(ListViewItem item) => item.Tag is ScanEntry entry ? entry.Size : 0;
+
+        private static string GetText(ListViewItem item, int index) =>
+            item.SubItems.Count > index ? item.SubItems[index].Text : "";
+    }
+
+    private void ResultsMouseDown(object? sender, MouseEventArgs e)
+    {
+        dragAnchorIndex = -1;
+        dragStartStates = null;
+        dragRangeStart = dragRangeEnd = -1;
+        if (e.Button != MouseButtons.Left) return;
+
+        var hit = results.HitTest(e.Location);
+        if (hit.Item == null || (hit.Location & ListViewHitTestLocations.StateImage) != 0) return;
+        dragAnchorIndex = hit.Item.Index;
+        dragStartPoint = e.Location;
+    }
+
+    private void ResultsMouseMove(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left || dragAnchorIndex < 0) return;
+        if (dragStartStates == null)
+        {
+            Size dragSize = SystemInformation.DragSize;
+            var dragRectangle = new Rectangle(
+                dragStartPoint.X - dragSize.Width / 2,
+                dragStartPoint.Y - dragSize.Height / 2,
+                dragSize.Width,
+                dragSize.Height);
+            if (dragRectangle.Contains(e.Location)) return;
+
+            dragStartStates = results.Items.Cast<ListViewItem>()
+                .Select(item => (item.Checked, item.Selected)).ToArray();
+            if (dragAnchorIndex >= dragStartStates.Length) { ResetDragSelection(); return; }
+            dragTargetChecked = !dragStartStates[dragAnchorIndex].Checked;
+        }
+
+        var hit = results.HitTest(e.Location);
+        if (hit.Item == null) return;
+        int newStart = Math.Min(dragAnchorIndex, hit.Item.Index);
+        int newEnd = Math.Max(dragAnchorIndex, hit.Item.Index);
+
+        if (dragRangeStart >= 0)
+        {
+            for (int i = dragRangeStart; i <= dragRangeEnd; i++)
+            {
+                if (i >= newStart && i <= newEnd) continue;
+                results.Items[i].Checked = dragStartStates[i].Checked;
+                results.Items[i].Selected = dragStartStates[i].Selected;
+            }
+        }
+
+        for (int i = newStart; i <= newEnd; i++)
+        {
+            if (i >= dragRangeStart && i <= dragRangeEnd) continue;
+            results.Items[i].Checked = dragTargetChecked;
+            results.Items[i].Selected = true;
+        }
+        dragRangeStart = newStart;
+        dragRangeEnd = newEnd;
+    }
+
+    private void ResultsMouseUp(object? sender, MouseEventArgs e) => ResetDragSelection();
+
+    private void ResetDragSelection()
+    {
+        dragAnchorIndex = -1;
+        dragRangeStart = dragRangeEnd = -1;
+        dragStartStates = null;
     }
     private void AddEntry(ScanEntry e)
     {
@@ -706,10 +843,7 @@ internal sealed class CleanerForm : Form
     private void ShowApps()
     {
         ClearResults(); appMode = true;
-        results.Columns[0].Text = "Категория";
-        results.Columns[1].Text = "Программа";
-        results.Columns[2].Text = "Версия";
-        results.Columns[3].Text = "Издатель / путь";
+        UpdateColumnHeaders();
         SetStatus("Загрузка списка установленных программ...");
         var apps = ReadInstalledApps();
         foreach (var app in apps.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase))

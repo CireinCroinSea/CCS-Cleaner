@@ -11,6 +11,8 @@ CCS Cleaner is a Windows utility for locating large files and carefully reviewin
 - Skip protected Windows and application locations, critical system files, and directory reparse points such as symbolic links and junctions.
 - Continue scanning when folders are inaccessible; skip locked, inaccessible, or changed items during deletion.
 - Use the dark interface, themes, text-size setting, and configurable category colors.
+- Drag across table rows to select and check multiple items at once.
+- Click the Name header to sort alphabetically in either direction, or Size to sort largest-first and smallest-first.
 
 ## Download and runtime
 

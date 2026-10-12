@@ -15,6 +15,8 @@
 - Keep the dark table and scrollbar appearance while fixing hover text contrast.
 - Make program and game rows follow the active theme and configured category colors.
 - Keep the Settings button visible and working.
+- Add drag selection that checks multiple rows together.
+- Add reversible alphabetical name sorting and numeric size sorting, with a divider below the column headings.
 
 ### Distribution
 - Build a compressed, self-contained Windows x64 single-file executable.
